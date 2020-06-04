@@ -1,0 +1,730 @@
+% jobs
+% different p1, p2 shapes
+% different Smith function shapes
+% set defined on sphere or on projection?
+
+%**************************************************************************
+%
+% # $Id: AWFE.Rnw,v 1.4 2007/06/19 21:53:47 js229 Exp $
+
+<<defmakeme,echo=FALSE,eval=FALSE>>=
+makeme <- function() {
+#	detach("package:Vennerable")
+	#library(weaver)
+	#setwd("C:/JonathanSwinton/PathwayModeling/src/R/SourcePackages/Vennerable/inst/doc")
+	setwd("C:/JonathanSwinton/Vennerable/inst/doc")
+	#Sweave(driver="weaver","Venn.Rnw",stylepath=FALSE,use.cache=FALSE)
+	# using weaver allows caching but will generate warnings about pdf versions
+	Sweave(driver="RweaveLatex","AWFE.Rnw",stylepath=FALSE)
+}
+makeme()
+@
+
+
+\documentclass[a4paper]{article}
+
+
+\title{
+Edwards-Venn diagrams
+}
+\author{Jonathan Swinton}
+
+\SweaveOpts{prefix.string=Vennfig,debug=TRUE,eps=FALSE,echo=FALSE,pdf.version=1.4}
+\usepackage{float}
+\usepackage{natbib}
+\usepackage{mathptmx}
+\usepackage{rotating} 
+\usepackage[nodayofweek]{datetime}\longdate
+\usepackage{hyperref}
+\begin{document}
+
+
+\maketitle
+
+<<doremove,echo=FALSE>>=
+remove(list=setdiff(ls(),"makeme"));
+library(Vennerable)
+library(grid)
+library(lattice)
+@
+
+Polar coordinates with longitude $\theta$ and latitude $\phi$. Arc distance
+from the equator is $s$ and height above the equarorial plane is $h$.
+\begin{eqnarray*}
+s &=& r \frac{\phi}{2\pi}
+\\
+h &=& r \sin \phi
+\end{eqnarray*}
+Project down onto the equatorial plane (a polar stereographic projection).
+\begin{eqnarray*}
+\rho &=& \frac{\cos\phi}{1-\sin\phi} 2r
+\\
+x &=& \rho \cos \theta
+\\
+y &=& \rho \sin \theta
+\end{eqnarray*}
+A Mercator projection onto the (?) equatorial cylinder
+\begin{eqnarray*}
+x &=& r \cos \phi \cos \theta
+\\
+y &=& r \cos \phi \sin \theta
+\end{eqnarray*}
+\begin{eqnarray*}
+x &=&  r theta
+\\
+y &=& h
+\end{eqnarray*}
+
+In a Mercator projection the Smith functions are
+\begin{eqnarray*}
+h &=& \frac{ \cos(2^{n-2} \theta)}{2^{n-2}}
+\end{eqnarray*}
+
+Let 
+\begin{eqnarray*}
+T_n &=& \frac{1}{2^n}\cos{2^n x}
+\\
+&=&  \frac{1}{2^n}\cos\frac{1}{2}{2^{n+1} x}
+\\
+2^{2n} T_n^2 &=& \frac{1}{2}\left( 1+ 2^{n+1}T_{n+1}\right)
+\\
+T_{n+1} &=& 2^{n} T_n^2 - \frac{1}{2^{n+1}}
+\end{eqnarray*}
+So $T_{n+1}=0$ when $T_n=\pm 2^{-n} 1/\sqrt(2)$; $2^nx=\pi/4+(p/2)2\pi$.
+
+<<defS>>=
+
+equator <- function(s,projection="PS") {
+	if (projection=="PS") {
+		theta <- s * (2*pi)
+		phi <- rep(0,length(s))
+		thetaphi <- cbind(theta,phi)
+		xy <- projection.thetaphi(thetaphi,projection=projection)
+		xy
+	} else if (projection=="EC") {
+		cbind(c(0,2*pi,2*pi,0),c(0,0,0,0))
+	}
+}
+
+@
+
+
+<<def2pi>>=
+twopi <- 2 * pi
+@
+
+<<defaes>>=
+
+# add edge to a graph with a Set and arc attribute
+aes <- function(from,to,Set,graph,Sn) { 
+	graph <- addEdge(from,to,graph); 
+	edgeData(graph,from,to,"Set")<- Set;
+	sfromto<- unlist(sofnode(graph,c(from,to)))
+	edgeData(graph,from,to,"arc") <- list( list(sfromto,Sn))
+#	eF <- new("edgeFunction",Set=Set,s=sfromto,f=Sn)
+#	edgeData(graph,from,to,"edgeDrawn") <- list( eF)
+	graph
+}
+
+sofnode <- function(graph,node) {
+	xylist <- nodeData(graph,node,attr="thetah")
+	slist <- lapply(xylist,function(xy){xy[1]/twopi})
+	slist
+}
+
+inject.node <- function(from,to,Set,inject,graph,Sn) {
+	graph <- aes(from,inject,Set,graph,Sn)
+	graph <- aes(inject,to,Set,graph,Sn)
+	midx <- nodeData(graph,inject,"thetah")[[1]][1]
+	mids <- midx /(2*pi)
+	arc <- edgeData(graph,from,to,"arc")[[1]]
+	arc.1 <- arc;arc.2 <- arc
+	arc.1[[1]] <- c(arc.1[[1]][1],mids)
+	arc.2[[1]] <- c(mids,arc.2[[1]][2])
+#cat("Injecting",inject,"into",from,":",to,"\n")
+#	eF.1 <- new("edgeFunction",Set=Set,s=arc.1[[1]],f=Sn)
+#	eF.2 <- new("edgeFunction",Set=Set,s=arc.2[[1]],f=Sn)
+#	edgeData(graph,from,inject,"edgeDrawn") <- list(eF.1)
+#	edgeData(graph,inject,to,"edgeDrawn") <- list(eF.2)
+
+	edgeData(graph,from,inject,"arc") <- list(arc.1)
+	edgeData(graph,inject,to,"arc") <- list(arc.2)
+	graph <- removeEdge(from,to,graph)
+	graph
+}	
+
+
+
+#####################
+# the inverse of injecting a node - find the edge it interrupts
+# and join it up
+# this function removes it from the graph
+remove.node <- function(node,graph) {
+	outE <- edges(graph,node)
+	inE <- inEdges(node,graph)
+	if (length(outE)!=1 | length(inE)!=1){ stop("p1 lost")}
+	from <- inE[[1]]; to <- outE[[1]]
+	graph <- addEdge(from,to,graph)
+	edgeDataL(graph,from,to) <- edgeData(graph,from,node)
+#cat("Splicing", node, "out of ",from,"to",to,"\n")
+	if ("arc" %in% names(edgeDataDefaults(graph))) {
+		s1 <-	edgeData(graph,from,node,"arc")[[1]][[1]]
+		s2 <-	edgeData(graph,node,to,"arc")[[1]][[1]]
+		s <- c(s1[1],s2[2])
+		edgeData(graph,from,to,"arc")[[1]][[1]] <- s
+#		eF <- edgeData(graph,from,node,"edgeDrawn")[[1]]
+#		eF@s <- s
+#		edgeData(graph,from,to,"edgeDrawn") <- list(eF)
+
+	}
+	graph <- removeNode(node,graph)
+	graph
+}
+#############
+# and this function removes it from the dual
+deject.node <- function(node,dual) {
+	# now the dual
+#cat("removing",node,"\n")
+	for (face.name in nodes(dual)) {
+		face <- nodeData(dual,face.name,"face")[[1]]
+		if (node %in% nodes(face)) {
+#cat("from",face.name,"\n")
+			face <-  remove.node(node,face)
+			nodeData(dual,face.name,"face") <- list(face)
+		}
+	}
+	dual
+}
+
+newDual <- function(n) {
+	nn <- IndicatorString(Venn(NumberOfSets=n))
+	Dn <- new("graphNEL",nodes=nn,edgemode="directed")
+	nodeDataDefaults(Dn,"face") <- new("graphNEL")
+	nodeDataDefaults(Dn,"thetah") <- matrix(as.numeric(NA),nrow=0,ncol=2)
+	Dn
+}
+
+
+Gray <- function(n) {
+	# The cosine-induced Gray code on n bits
+	# (starting at 1... rather than zero as usual)
+	if (n==1) return(c("1","0"))
+	# 
+	G1 <- Gray(n-1)
+	G2 <- c(G1,rev(G1))
+	paste(rep(Gray(1),each=2^(n-1)),G2,sep="")
+}
+
+"nodeDataL<-" <- function(graph,nodes,attr,value) {
+	for (nodeix in seq_along(nodes)) {
+		nodeData(graph,nodes[[nodeix]],attr) <- value[nodeix]
+	}
+	graph
+}
+
+"edgeDataL<-" <- function(graph,from,to,value) {
+	for (attr in names(value[[1]])) {
+		edgeData(graph,from,to,attr) <- value[[1]][attr]
+	}
+	graph
+}
+
+@
+
+<<maken>>=
+#################
+
+# stage n
+find.flanks <- function(interval.ends,x) {
+	# given a named vector of interval.ends, return the pair of names which flanks x
+	# if x> the biggest or < the smallest , return the last and first
+	interval.ends <- sort(interval.ends)
+	if (x < min(interval.ends) | x> max(interval.ends)) {
+		res <- names(interval.ends)[c(length(interval.ends),1)]
+	} else {
+		below <- interval.ends[interval.ends<=x];name.below<- names(below)[which.max(below)]
+		above <- interval.ends[interval.ends>=x];name.above<- names(above)[which.min(below)]
+		res <- c(name.below,name.above)
+	}
+	res
+} 
+
+compute.new.crossings.xy <- function(n,S,projection) {
+	# will have no more than one between each pair of zeros of S[[n]]
+	zpos <- zeropos(n); zposs <- c(zpos,zpos[1]); 
+	# other S values at the zeroes
+	Szpos <- lapply(S[1:n-1],function(f)sapply(zposs,function(s)f(s,projection)[2]))
+	Set.crossings <- lapply(1:(length(zposs)-1),function(ix) {
+		Sint <- sapply(Szpos,function(x){sign(x[ix]*x[ix+1])})
+		Set.cross <- which(Sint==-1)
+		if (length(Set.cross)!=1) { stop("Too many crossing points")}
+		func.diff <- function(s){ xy <- S[[Set.cross]](s,projection)-S[[n]](s,projection); xy[,2] }
+		rhs <- zposs[ix+1]
+		if (zposs[ix]>rhs) { rhs <- rhs+1}
+		s.cross <- uniroot(func.diff,c(zposs[ix],rhs))$root %% 1
+		xy.cross <- S[[n]](s.cross,projection)
+		c(xy.cross,Set.cross=Set.cross)
+	})
+	Set.crossings
+}
+
+compute.edges.interrupted <-  function(Set.crossings,nn,An){
+	do.call(rbind,lapply(1:length(nn) ,function(nix) {
+		new.node <- nn[nix]
+
+		on.set <- Set.crossings[[nix]][3]
+		set.edges <- edgeData(An,attr="Set")
+		this.set.edges <- names(set.edges)[set.edges==on.set]
+		this.set.edge.starts <- sapply(strsplit(this.set.edges,split="|",fixed=TRUE),function(x)x[1])
+		this.set.edge.ends <- sapply(strsplit(this.set.edges,split="|",fixed=TRUE),function(x)x[2])
+		this.set.edge.x <- sapply(nodeData(An,this.set.edge.starts,attr="thetah"),function(x)x[,1])
+		this.set.edge.x <- sort(this.set.edge.x)
+		new.node.x <- sapply(nodeData(An,new.node,attr="thetah"),function(x)x[,1])
+
+		flanks <- find.flanks(this.set.edge.x,new.node.x)		
+		list(from=flanks[1],to=flanks[2],Set=on.set,inject=new.node)
+	}))
+}
+
+
+splitFaces.1 <- function(Dn1,An,n,Sn,nn,crossing.points,projection) {
+	# we now have the new graph defined in A[[n]]
+	# we have to go through each face of the old dual D[[n-1]]
+	Dn <- Dn1
+	# and split it into two faces 
+	# we do this by cycling over each adjacent pair of new nodes and thus a new edge
+	# determining which old face the new edge passes through and then doing the split
+	for (nix in 1:length(nn)) {
+	# find which face the new curve passes through
+		nextnix <- if(nix==length(nn)){1}else{nix+1}
+		from <- nn[nix] ; to <- nn[nextnix]
+		fromto.x <- unlist(sofnode(An,c(from,to)))
+		from.x <- fromto.x[1];to.x <- fromto.x[2]
+		if (to.x<from.x) { to.x <- to.x+1}
+		zp <- zeropos(n) ####  use of zeropos to find interval!!
+ 		zix <- which(zp > from.x & zp < to.x)
+		stopifnot(length(zix)==1)
+		oldface.name <- Gray(n-1)[zix] ##### use of Gray code to get name
+	#  now collect the two new faces there must be
+		oldface <- nodeData(Dn1,oldface.name,"face")[[1]]
+		oldface.nodes <- nodes(oldface)
+		newface.nodes <- c(oldface.nodes,from,to)
+		face <- subGraph(newface.nodes,An)
+	# special case to make n=2 right
+		if (from %in% edges(face)[[to]]) { # ie an edge to:from as well as from:to
+			face <- removeEdge(to,from,face)
+		}
+cat("Splitting",oldface.name,"with ",from,"and",to,"\n")
+		if (FALSE) {
+			edge.1 <- crossing.points[crossing.points[,"inject"]==from,]
+			edge.2 <- crossing.points[crossing.points[,"inject"]==to,]
+		
+			face <- oldface
+			face <- addNode(c(from,to),face)
+			# nb we are doing this twice, once for the face and once for the whole graph, cant be best
+			face <- inject.node(edge.1$from,edge.1$to,edge.1$Set,edge.1$inject,face,Sn)
+			face <- inject.node(edge.2$from,edge.2$to,edge.2$Set,edge.2$inject,face,Sn)
+			face <- aes(from,to,n,face,Sn)
+
+		}
+		cutface <- removeNode(c(from,to),face)
+		components <- connComp(cutface)
+		face.1 <- removeNode(components[[2]],face)
+		face.2 <- removeNode(components[[1]],face)
+	# finally, which is which?
+	# pick a node in face 1
+		test.node <- setdiff(nodes(face.1),c(from,to))[1]
+		test.xy <-	nodeData(An,test.node,"thetah")[[1]]
+		test.s <- test.xy[,1]/(twopi)
+		test.Sn.yval <- Sn(test.s,projection)[,2]
+		test.yval <- test.xy[,2]
+	# it is in set n if its below the curve
+		face.1.in.set <- test.yval < test.Sn.yval
+		face.1.name <- paste(oldface.name,if( face.1.in.set){"1"}else{"0"},sep="")
+		face.2.name <- paste(oldface.name,if(!face.1.in.set){"1"}else{"0"},sep="")
+	# finally replace them
+		Dn <- removeNode(oldface.name,Dn)
+		Dn <- addNode(c(face.1.name,face.2.name),Dn)
+		nodeData(Dn,c(face.1.name,face.2.name),"face") <- list(face.1,face.2)
+	}
+	# this relies on the construction method!
+	Gn <- Gray(n)
+	nodeDataL(Dn,Gn ,"thetah") <- lapply(zerotheta(n+1),function(x){cbind(x,0)})
+	Dn
+}
+
+
+makestage <- function(n,An1,Dn1,S,projection) {
+	An <- An1 # before addition of new curve 
+	new.node.count <- 2^(n-1)
+	if (n>26) { stop("Should have given up for other reasons by now")}
+	new.nodes <- paste(letters[n],1:new.node.count,sep="")
+	An <- addNode(new.nodes,An)
+	# compute new intersections 
+	Set.crossings <- compute.new.crossings.xy(n,S,projection)
+	# and make them new nodes
+	nodeDataL(An,new.nodes ,"thetah") <- lapply(Set.crossings,function(x){matrix(x[1:2],nrow=1)})
+	# then inject the new nodes into the graph
+	### add in all the intersections with older sets by injection
+
+	crossing.points <-compute.edges.interrupted(Set.crossings,new.nodes,An)
+	for (nix  in 1:length(new.nodes)) { 
+		cp <- crossing.points[nix,]
+		An <- inject.node(cp$from,cp$to,cp$Set,cp$inject,An,S[[n]])		 
+	}
+	# dont forget to add in the new set itself
+	for (nix in 1:length(new.nodes)) {
+		from <- new.nodes[nix] ; to <- new.nodes[if(nix==length(new.nodes)){1}else{nix+1}]
+		An <- aes(from,to,n,An,S[[n]])
+	}
+
+	# ok, now update the dual
+#	Dn <- newDual(n)
+#	Gn <- Gray(n)
+#	nodeDataL(Dn,Gn ,"thetah") <- lapply(zerotheta(n+1),function(x){cbind(x,0)})
+	
+	Dn <- splitFaces.1(Dn1,An,n,S[[n]],new.nodes,crossing.points,projection)
+	list(A=An,D=Dn)
+}
+@
+
+<<mk1>>=
+
+############
+# Stage 1
+make1 <- function() {
+	A1 <- new("graphNEL",edgemode="directed")
+	nodeDataDefaults(A1,"thetah") <- matrix(as.numeric(NA),nrow=0,ncol=2)
+	A1 <- addNode(node=c("P1","P2"),A1)
+
+	S1 <- function(s)S[[1]](s,projection="EC")
+	nodeData(A1,c("P1","P2"),"thetah") <- list(S1(1/4),S1(3/4))
+#	edgeDataDefaults(A1,"edgeDrawn") <- new("edgeFunction")
+	edgeDataDefaults(A1,"arc") <- list(numeric(2),function(){})
+	edgeDataDefaults(A1,"Set") <- numeric(0)
+
+	A1 <- addEdge("P1","P2",A1);A1 <- addEdge("P2","P1",A1);
+	edgeData(A1,"P1","P2","arc") <- list( list(c(1/4,3/4),S[[1]]))
+	edgeData(A1,"P1","P2","Set") <- list( 1)
+#	edgeData(A1,"P1","P2","edgeDrawn") <- new("edgeFunction",Set=1,s=c(1/4,3/4),f=S[[1]])
+	edgeData(A1,"P2","P1","arc") <- list( list(c(3/4,1/4),S[[1]]))
+	edgeData(A1,"P2","P1","Set") <- list( 1)
+#	edgeData(A1,"P2","P1","edgeDrawn") <- new("edgeFunction",Set=1,s=c(3/4,1/4),f=S[[1]])
+
+	D1 <- newDual(1)
+
+	G1 <- Gray(1)
+
+	nodeData(D1,G1 ,"thetah") <- lapply(zerotheta(2),function(x){cbind(x,0)})
+	face <- A1
+	nodeData(D1,G1 ,"face") <- list(face,face)
+
+	list(A=A1,D=D1)
+}
+
+@
+
+<<>>=
+# the equatorial zeroes of the nth Smith function on (0:1)
+zeropos<- function(n) {
+	nzeroes <- 2^((n-1))
+	zerospacing <- 1/nzeroes
+	zerotheta <- -(zerospacing/2)+ zerospacing*( 1:nzeroes)
+	zerotheta
+	}
+zerotheta <- function(n) { twopi * zeropos(n) }
+
+zerolines <- function(n,gp) {
+	zeroes <- zerotheta(n)
+	grid.segments(y0=-1,y1=1,x0=zeroes,x1=zeroes,gp=gp,default.units="native")
+	}
+
+# this creates a function of s=(0,1) on a sphere. We may rely on theta=2 pi s
+Smithn.function <- function(n,hmax=0.7,offset=0) {
+	function(s,projection) {
+	theta <-  (s * (twopi) )
+	h <- cos(2^(n-2) * (theta-offset))/(2^(n-2)) * hmax
+	phi <- asin(h)
+	thetaphi <- cbind(theta,phi)
+	xy <- projection.thetaphi(thetaphi,projection=projection)
+	xy
+}
+}
+
+@
+
+<<defrect>>=
+rectify.face <- function(face) {}
+
+@
+
+
+<<mkS>>=
+
+maketo <- function(upto) {
+
+	S <- list() # the nth Set boundary
+
+	S <- lapply(1:upto, function(n){
+		if (n==1) { 
+			Smithn.function(n=2,offset=pi/2)
+		} else {
+			 Smithn.function(n=n,offset=0)
+		}
+	})
+
+	A <- list() # the nth graph
+	D <- list() # the nth dual
+
+	AD <- make1()
+	# The graphs are guaranteed to have no more than one edge between two nodes
+	# In addition, for n=1, the edge would be a1->a1 s:0->1 which is a risky edge 
+	# condition (tho it might work) so we introduce two extra nodes P1 and P2 in that 
+	# set. For n=3 and above we can delete the extra nodes.  
+	A[[1]] <- AD$A; D[[1]] <- AD$D
+	for (n in 2:upto) {
+cat("Building Set",n,"\n")
+		AD <- makestage(n,A[[n-1]],D[[n-1]],S,"EC")
+		A[[n]] <- AD$A; D[[n]] <- AD$D
+		if (n==3) {
+			A[[3]] <- remove.node("P1",A[[3]])
+			A[[3]] <- remove.node("P2",A[[3]])
+			D[[3]] <- deject.node("P1",D[[3]])
+			D[[3]] <- deject.node("P2",D[[3]])
+		}
+	}
+	list(A=A,S=S,D=D)
+}
+
+
+@
+
+<<>>=
+#AWFEto7<- maketo(7)
+#save(file="AWFEto7.rda",ASDto7)
+#AWFEto<- maketo(6)
+#save(file="../data/AWFEto6.rda",AWFEto)
+#load("../data/AWFEto6.rda")
+rdaFile <- system.file(package="Vennerable","data/AWFEto6.rda")
+#warning(sprintf("rda file %s exists: %d",rdaFile,file.exists(rdaFile)))
+rdaData <- load(rdaFile)
+#warning(sprintf("containing %s",rdaData))
+#AWFEto= AWFEto6
+A=AWFEto$A;D=AWFEto$D;S=AWFEto$S
+
+########  this generates the sets and the duals with coordinates specified 
+# in theta-h from the "EC"=equatorial cylindrical projection
+# A and D encode these in the "thetah" attribute on nodes for the graph)
+# or on nodes in the face attributes of each node (for the dual).
+# There is a deal of duplication here.
+# The set boundaries themselves are encoded, for the graph, as
+# arc attributes of edges which contain a function of arc in the second component
+# and return either EC or PS coordinates depending on their second argument.
+# for the dual, again the details of each arc are copied...
+
+@
+
+
+
+
+
+
+
+
+<<defpv>>=
+plotprojection <- function(A,D,S,projection,upto=3,annote=character(0)) {
+
+	xr <- if (projection=="PS") {5*c(-1,1)} else {c(-0.1,2*pi+.1)}
+	yr <- if (projection=="PS") {xr} else {c(-1.1,1.1)}
+	pushViewport(dataViewport(xr,yr,clip="on",name="pvp"))
+	on.exit(upViewport())
+
+	# the equator circle
+	s <- seq(0,1,length=100)
+
+	thexy <- equator(s,projection);grid.polygon(thexy[,1],thexy[,2],gp=gpar(col="grey"),default.units="native")
+
+
+	if ( projection=="EC" ) {
+		for (n in 1:(upto+1)) {
+		if ("lines" %in% annote) {	zerolines(n,gp=gpar(col="grey",lwd=if(n==upto){2}else{1},lty=if(n>upto){2}else{1})	)}
+		}
+	}
+	parc(A[[upto]],D[[upto]],S[1:upto],annote=annote,projection=projection)
+
+}
+
+
+
+
+#############################
+arc.to.xy <- function(earc,nintervals,projection) {
+	s12 <- earc[[1]]
+	sfunc <- earc[[2]]
+	if (s12[2]<s12[1]) { 
+		srange <- c(seq(s12[1],1,length=nintervals),NA,seq(0,s12[2],length=nintervals))
+	} else {
+		srange <- seq(s12[1],s12[2],length=nintervals)
+	}	
+	xy <- sfunc(s=srange,projection=projection)
+#	xy <- do.call(sfunc,list(s=srange,projection=projection))
+	xy
+}
+
+parc <- function(graph,dual,S,nintervals=100,annote=c("inn"),projection) {
+	gp <- gpar(col=trellis.par.get("superpose.symbol")$col)
+
+	for (nn in nodes(graph)){
+		if ("nodes" %in% annote) {
+			thetah <- nodeData(graph,nn,"thetah")[[1]]
+			xy <- thetah.to.xy(thetah,projection)
+			grid.text(x=xy[1],y=xy[,2],label=nn,default.units="native",just=c("right","top")) 
+		}
+		if ("edges" %in% annote) {
+			for (to in edges(graph,nn)[[1]]) {
+				earc <-edgeData(graph,nn,to,"arc")[[1]]
+				xy <- arc.to.xy(earc,nintervals,projection)
+		 		grid.lines(x=xy[,1],y=xy[,2],default.units="native",gp=gpar(lwd=2))
+			}
+		}
+	}
+	for (dn in nodes(dual)) {
+		if ("inn" %in% annote) {
+			thetah <- nodeData(dual,dn,"thetah")[[1]]
+			if (!is.null(thetah)) {
+				xy <- thetah.to.xy(thetah,projection)
+				grid.text(x=xy[1],y=xy[2],label=dn,default.units="native")
+			}
+		}
+		if ("Face" %in% annote) {
+#if (  dn  %in% c("1","10","100","1000")) {fty<-3} else {fty<-1}
+#if (dn!="1000") break;
+			face <- nodeData(dual,dn,"face")[[1]]
+			for (face.from in nodes(face)) {
+				for (face.to in edges(face,face.from)[[1]]) {
+					earc <- edgeData(graph,face.from,face.to,"arc")[[1]]
+					Six<- edgeData(graph,face.from,face.to,"Set")[[1]]
+
+					xy <- arc.to.xy(earc,nintervals,projection)
+	 				grid.lines(x=xy[,1],y=xy[,2],default.units="native",gp=gpar(gp[Six]),arrow=arrow(length=unit(2,"mm"),type="closed")) 
+				}
+			}
+		}
+	}
+	if ("Set" %in% annote) {
+		s <- seq(0,1,length=100)
+
+		for (Six in  1:length(S)) {
+			thexy <- S[[Six]](s,projection)
+			grid.lines(thexy[,1],thexy[,2],gp=gp[Six],default.units="native")
+		}
+	}
+}
+
+
+@
+<<dovpsp>>=
+vxy <- function(x,y){pushViewport(viewport(layout.pos.col=y,layout.pos.row=x))}
+
+vpair <- function(A,D,S,upto,annote=TRUE) {
+	pushViewport(viewport(layout=grid.layout(1,2)))
+	vxy(1,1)
+	plotprojection(A,D,S,"PS",upto,annote)
+	upViewport();vxy(1,2)
+	plotprojection(A,D,S,"EC",upto,annote)
+
+	upViewport()
+	upViewport()
+}
+
+@
+
+\begin{figure}[H]\begin{center}
+<<rdovpspto2,fig=TRUE>>=
+f12 <- function(A,D,S) {
+	grid.newpage()
+	pushViewport(viewport(layout=grid.layout(2,1)))
+	for (upto in (1:2)) {
+		vxy(upto,1)
+		vpair (A,D,S,upto,annote=c("nodes","Set","inn"))
+		upViewport()
+	}
+}
+
+f12(A,D,S)
+@
+\caption{Additional nodes P1 and P2 introduced for n=1 and n=2 to avoid nasty edge condition s=0 to s=1
+and to ensure no more than one directed edge between any pair of nodes.}
+\end{center}\end{figure}
+
+<<rdovpsp,fig=TRUE>>=
+f1 <- function(A,D,S,upto) {
+	grid.newpage()
+	pushViewport(viewport(layout=grid.layout(5,1)))
+	for (upto in (1:5)) {
+		vxy(upto,1)
+		vpair (A,D,S,upto,annote="Set")
+		upViewport()
+	}
+}
+f1(A,D,S,upto)
+@
+
+<<rfdovpsp,fig=TRUE>>=
+f2 <- function(A,D,S,projection="EC",annote){
+	grid.newpage()
+	pushViewport(viewport(layout=grid.layout(5,1)))
+	for (upto in (1:5)) {
+		vxy(upto,1)
+		plotprojection(A,D,S,"EC",upto,annote=c("Set","lines"))
+ 		upViewport()
+	}
+}
+f2(A,D,S)
+@
+
+
+<<rfdovpsp4,fig=TRUE>>=
+f4 <- function(A,D,S,projection="EC",annote){
+	grid.newpage()
+	plotprojection(A,D,S,"PS",4,annote=c("nodes","Face"))
+
+ 	}
+f4(A,D,S)
+@
+
+
+<<doA3>>=
+V3 <- Venn(SetNames=month.name[1:3])
+AWFE3 <- compute.AWFE(V3)
+grid.newpage()
+PlotVennGeometry(AWFE3,show=list(intersection.weight=FALSE))
+downViewport("Vennvp")
+ PlotNodes(AWFE3)
+
+sAWFE3 <- scythe.AWFE(AWFE3)
+grid.newpage()
+PlotVennGeometry(sAWFE3 ,show=list(intersection.weight=FALSE,Sets=FALSE,Faces=TRUE))
+downViewport("Vennvp")
+ PlotNodes(sAWFE3)
+@
+
+<<doA4>>=
+
+setList <- strsplit(month.name,split="")
+names(setList) <- month.name
+
+V4 <-  VennFromSets( setList[1:4])
+
+AWFE4 <- compute.AWFE(V4)
+sAWFE4 <- scythe.AWFE(AWFE4)
+grid.newpage()
+PlotVennGeometry(sAWFE4 ,show=list(intersection.weight=FALSE,Sets=FALSE,Faces=TRUE))
+downViewport("Vennvp")
+ PlotNodes(sAWFE4)
+@
+
+\bibliographystyle{plain}
+\bibliography{Venn}
+
+\end{document}
